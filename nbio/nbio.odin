@@ -175,7 +175,7 @@ Inputs:
 */
 On_Close :: #type proc(user: rawptr, ok: bool)
 
-@private
+@(private)
 empty_on_close :: proc(_: rawptr, _: bool) {}
 
 /*
@@ -298,6 +298,8 @@ recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, cal
 	_recv(io, socket, buf, user, callback, all = true)
 }
 
+On_RecvMsg :: #type proc(user: rawptr, received: int, err: net.Network_Error)
+
 /*
 The callback for non blocking `send` and `send_all` requests
 
@@ -325,6 +327,10 @@ Inputs:
 send_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) {
 	_send(io, socket, buf, user, callback)
 }
+
+// TODO: document
+On_SentMsg :: #type proc(user: rawptr, sent: int, err: net.Network_Error)
+
 
 /*
 Sends at most `len(buf)` bytes from the given buffer over the socket connection to the given endpoint, and calls the given callback
@@ -713,7 +719,6 @@ MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
 Completion :: struct {
 	// Implementation specifics, don't use outside of implementation/os.
 	using _:   _Completion,
-
 	user_data: rawptr,
 
 	// Callback pointer and user args passed in poly variants.
@@ -728,6 +733,8 @@ Operation :: union #no_nil {
 	Op_Read,
 	Op_Recv,
 	Op_Send,
+	Op_RecvMsg,
+	Op_SendMsg,
 	Op_Write,
 	Op_Timeout,
 	Op_Next_Tick,

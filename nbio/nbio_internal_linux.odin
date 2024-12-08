@@ -89,6 +89,20 @@ Op_Recv :: struct {
 	len:      int,
 }
 
+Op_SendMsg :: struct {
+	callback: On_SentMsg,
+	socket:   net.Any_Socket,
+	header:   io_uring.IORing_Msgheader,
+	sent:     int,
+}
+
+Op_RecvMsg :: struct {
+	callback: On_RecvMsg,
+	socket:   net.Any_Socket,
+	header:   io_uring.IORing_Msgheader,
+	received: int,
+}
+
 Op_Timeout :: struct {
 	callback: On_Timeout,
 	expires:  linux.Time_Spec,
@@ -120,7 +134,7 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 	// Store length at this time, so we don't infinite loop if any of the enqueue
 	// procs below then add to the queue again.
 	n := queue.len(io.unqueued)
-
+	
 	// odinfmt: disable
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&io.unqueued)
@@ -131,6 +145,8 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 		case Op_Read:        read_enqueue       (io, unqueued, &op)
 		case Op_Recv:        recv_enqueue       (io, unqueued, &op)
 		case Op_Send:        send_enqueue       (io, unqueued, &op)
+		case Op_RecvMsg:     recvmsg_enqueue    (io, unqueued, &op)
+		case Op_SendMsg:     sendmsg_enqueue    (io, unqueued, &op)
 		case Op_Write:       write_enqueue      (io, unqueued, &op)
 		case Op_Timeout:     timeout_enqueue    (io, unqueued, &op)
 		case Op_Poll:        poll_enqueue       (io, unqueued, &op)
@@ -151,6 +167,8 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 		case Op_Read:        read_callback       (io, completed, &op)
 		case Op_Recv:        recv_callback       (io, completed, &op)
 		case Op_Send:        send_callback       (io, completed, &op)
+	    case Op_RecvMsg:     recvmsg_callback    (io, completed, &op)
+		case Op_SendMsg:     sendmsg_callback    (io, completed, &op)
 		case Op_Write:       write_callback      (io, completed, &op)
 		case Op_Timeout:     timeout_callback    (io, completed, &op)
 		case Op_Poll:        poll_callback       (io, completed, &op)
@@ -254,7 +272,7 @@ accept_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 	}
 
 	client := net.TCP_Socket(completion.result)
-	err    := _prepare_socket(client)
+	err := _prepare_socket(client)
 	source := sockaddr_storage_to_endpoint(&op.sockaddr)
 
 	op.callback(completion.user_data, client, source, err)
@@ -391,6 +409,49 @@ recv_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	pool_put(&io.completion_pool, completion)
 }
 
+recvmsg_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
+	socket: os.Socket
+	switch sock in op.socket {
+	case net.TCP_Socket:
+		socket = os.Socket(sock)
+	case net.UDP_Socket:
+		socket = os.Socket(sock)
+	}
+	_, err := io_uring.recvmsg(&io.ring, u64(uintptr(completion)), socket, &op.header, 0)
+	if err == .Submission_Queue_Full {
+		queue.push_back(&io.unqueued, completion)
+		return
+	}
+	// TODO: handle other errors, also in other enqueue procs.
+
+	io.ios_queued += 1
+}
+
+recvmsg_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
+	if completion.result < 0 {
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
+			recvmsg_enqueue(io, completion, op)
+		case:
+			op.callback(completion.user_data, op.received, net.TCP_Recv_Error(errno))
+			pool_put(&io.completion_pool, completion)
+		}
+		return
+	}
+
+	op.received += int(completion.result)
+
+	// these were allocated in _recvmsg
+	// if we make the user pass in the msg header directly,
+	// then we don't have to do this
+	// TODO: ask laytan what he thinks
+	delete((transmute(^[]linux.IO_Vec)op.header.msg_iov)^)
+
+	op.callback(completion.user_data, op.received, nil)
+	pool_put(&io.completion_pool, completion)
+}
+
 send_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	tcpsock, ok := op.socket.(net.TCP_Socket)
 	if !ok {
@@ -427,6 +488,49 @@ send_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 		send_enqueue(io, completion, op)
 		return
 	}
+
+	op.callback(completion.user_data, op.sent, nil)
+	pool_put(&io.completion_pool, completion)
+}
+
+sendmsg_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_SendMsg) {
+	socket: os.Socket
+	switch sock in op.socket {
+	case net.TCP_Socket:
+		socket = os.Socket(sock)
+	case net.UDP_Socket:
+		socket = os.Socket(sock)
+	}
+	_, err := io_uring.recvmsg(&io.ring, u64(uintptr(completion)), socket, &op.header, 0)
+	if err == .Submission_Queue_Full {
+		queue.push_back(&io.unqueued, completion)
+		return
+	}
+	// TODO: handle other errors, also in other enqueue procs.
+
+	io.ios_queued += 1
+}
+
+sendmsg_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_SendMsg) {
+	if completion.result < 0 {
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
+			sendmsg_enqueue(io, completion, op)
+		case:
+			op.callback(completion.user_data, op.sent, net.TCP_Send_Error(errno))
+			pool_put(&io.completion_pool, completion)
+		}
+		return
+	}
+
+	op.sent += int(completion.result)
+
+	// these were allocated in _sendmsg
+	// if we make the user pass in the msg header directly,
+	// then we don't have to do this
+	// TODO: ask laytan what he thinks
+	delete((transmute(^[]linux.IO_Vec)op.header.msg_iov)^)
 
 	op.callback(completion.user_data, op.sent, nil)
 	pool_put(&io.completion_pool, completion)
@@ -510,8 +614,10 @@ next_tick_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Next_Tick) 
 poll_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
 	events: linux.Fd_Poll_Events
 	switch op.event {
-	case .Read:  events = linux.Fd_Poll_Events{.IN}
-	case .Write: events = linux.Fd_Poll_Events{.OUT}
+	case .Read:
+		events = linux.Fd_Poll_Events{.IN}
+	case .Write:
+		events = linux.Fd_Poll_Events{.OUT}
 	}
 
 	flags: io_uring.IORing_Poll_Flags
@@ -538,8 +644,10 @@ poll_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
 poll_remove_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll_Remove) {
 	events: linux.Fd_Poll_Events
 	switch op.event {
-	case .Read:  events = linux.Fd_Poll_Events{.IN}
-	case .Write: events = linux.Fd_Poll_Events{.OUT}
+	case .Read:
+		events = linux.Fd_Poll_Events{.IN}
+	case .Write:
+		events = linux.Fd_Poll_Events{.OUT}
 	}
 
 	_, err := io_uring.poll_remove(&io.ring, u64(uintptr(completion)), op.fd, events)
@@ -559,7 +667,11 @@ ring_err_to_os_err :: proc(err: io_uring.IO_Uring_Error) -> os.Errno {
 	switch err {
 	case .None:
 		return os.ERROR_NONE
-	case .Params_Outside_Accessible_Address_Space, .Buffer_Invalid, .File_Descriptor_Invalid, .Submission_Queue_Entry_Invalid, .Ring_Shutting_Down:
+	case .Params_Outside_Accessible_Address_Space,
+	     .Buffer_Invalid,
+	     .File_Descriptor_Invalid,
+	     .Submission_Queue_Entry_Invalid,
+	     .Ring_Shutting_Down:
 		return os.EFAULT
 	case .Arguments_Invalid, .Entries_Zero, .Entries_Too_Large, .Entries_Not_Power_Of_Two, .Opcode_Not_Supported:
 		return os.EINVAL

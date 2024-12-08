@@ -111,6 +111,10 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) -> ^Comp
 	completion.user_data = user
 
 	handle: os.Handle
+
+
+	
+	
 	//odinfmt:disable
 	switch h in fd {
 	case net.TCP_Socket: handle = os.Handle(h)
@@ -128,7 +132,15 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) -> ^Comp
 	return completion
 }
 
-_connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) -> (^Completion, net.Network_Error) {
+_connect :: proc(
+	io: ^IO,
+	endpoint: net.Endpoint,
+	user: rawptr,
+	callback: On_Connect,
+) -> (
+	^Completion,
+	net.Network_Error,
+) {
 	if endpoint.port == 0 {
 		return nil, net.Dial_Error.Port_Required
 	}
@@ -184,7 +196,14 @@ _read :: proc(
 	return completion
 }
 
-_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv, all := false) -> ^Completion {
+_recv :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	buf: []byte,
+	user: rawptr,
+	callback: On_Recv,
+	all := false,
+) -> ^Completion {
 	completion := pool_get(&io.completion_pool)
 
 	completion.ctx = context
@@ -198,6 +217,46 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	}
 
 	recv_enqueue(io, completion, &completion.operation.(Op_Recv))
+	return completion
+}
+
+_recvmsg :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	name: ^[]byte,
+	iovecs: [][]byte,
+	user: rawptr,
+	callback: On_RecvMsg,
+	flags := 0,
+) -> ^Completion {
+	completion := pool_get(&io.completion_pool)
+
+	completion.ctx = context
+	completion.user_data = user
+
+	// TODO figure out how to avoid this allocation
+	// should it be passed to the user?
+	iovec_sts := make([]linux.IO_Vec, len(iovecs))
+	for &buf, i in iovecs {
+		iovec_sts[i] = linux.IO_Vec {
+			base = rawptr(raw_data(buf)),
+			len  = uint(len(buf)),
+		}
+	}
+
+	completion.operation = Op_RecvMsg {
+		callback = callback,
+		socket = socket,
+		header = io_uring.IORing_Msgheader {
+			msg_name = u64(uintptr(name)),
+			msg_namelen = u32(len(name)),
+			msg_iov = u64(uintptr(&iovec_sts)),
+			msg_iovlen = u32(len(iovec_sts)),
+			msg_flags = u32(flags),
+		},
+	}
+
+	recvmsg_enqueue(io, completion, &completion.operation.(Op_RecvMsg))
 	return completion
 }
 
@@ -223,6 +282,46 @@ _send :: proc(
 	}
 
 	send_enqueue(io, completion, &completion.operation.(Op_Send))
+	return completion
+}
+
+_sendmsg :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	name: ^[]byte,
+	iovecs: ^[][]byte,
+	user: rawptr,
+	callback: On_SentMsg,
+	flags := 0,
+) -> ^Completion {
+	completion := pool_get(&io.completion_pool)
+
+	completion.ctx = context
+	completion.user_data = user
+
+	// TODO figure out how to avoid this allocation
+	// should it be passed to the user?
+	iovec_sts := make([]linux.IO_Vec, len(iovecs))
+	for &buf, i in iovecs {
+		iovec_sts[i] = linux.IO_Vec {
+			base = rawptr(raw_data(buf)),
+			len  = uint(len(buf)),
+		}
+	}
+
+	completion.operation = Op_SendMsg {
+		callback = callback,
+		socket = socket,
+		header = io_uring.IORing_Msgheader {
+			msg_name = u64(uintptr(name)),
+			msg_namelen = u32(len(name)),
+			msg_iov = u64(uintptr(&iovec_sts)),
+			msg_iovlen = u32(len(iovec_sts)),
+			msg_flags = u32(flags),
+		},
+	}
+
+	sendmsg_enqueue(io, completion, &completion.operation.(Op_SendMsg))
 	return completion
 }
 
@@ -261,8 +360,8 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
 		callback = callback,
-		expires = linux.Time_Spec{
-			time_sec  = uint(nsec / NANOSECONDS_PER_SECOND),
+		expires = linux.Time_Spec {
+			time_sec = uint(nsec / NANOSECONDS_PER_SECOND),
 			time_nsec = uint(nsec % NANOSECONDS_PER_SECOND),
 		},
 	}
@@ -291,7 +390,7 @@ _poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawp
 	completion.ctx = context
 	completion.user_data = user
 
-	completion.operation = Op_Poll{
+	completion.operation = Op_Poll {
 		callback = callback,
 		fd       = fd,
 		event    = event,
@@ -306,7 +405,7 @@ _poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
 	completion := pool_get(&io.completion_pool)
 
 	completion.ctx = context
-	completion.operation = Op_Poll_Remove{
+	completion.operation = Op_Poll_Remove {
 		fd    = fd,
 		event = event,
 	}

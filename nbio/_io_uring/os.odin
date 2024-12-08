@@ -448,6 +448,27 @@ recv :: proc(
 	return
 }
 
+// Queues (but does not submit) an SQE to perform a `recvmsg(2)`.
+recvmsg :: proc(
+	ring: ^IO_Uring,
+	user_data: u64,
+	sockfd: os.Socket,
+	header: ^IORing_Msgheader,
+	flags: u32,
+) -> (
+	sqe: ^io_uring_sqe,
+	err: IO_Uring_Error,
+) {
+	sqe = get_sqe(ring) or_return
+	sqe.opcode = IORING_OP.RECVMSG
+	sqe.fd = i32(sockfd)
+	sqe.addr = cast(u64)uintptr(header)
+	sqe.len = size_of(IORing_Msgheader)
+	sqe.rw_flags = i32(flags)
+	sqe.user_data = user_data
+	return
+}
+
 // Queues (but does not submit) an SQE to perform a `send(2)`.
 send :: proc(
 	ring: ^IO_Uring,
@@ -464,6 +485,27 @@ send :: proc(
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(raw_data(buf))
 	sqe.len = u32(len(buf))
+	sqe.rw_flags = i32(flags)
+	sqe.user_data = user_data
+	return
+}
+
+// Queues (but does not submit) an SQE to perform a `sendmsg(2)`.
+sendmsg :: proc(
+	ring: ^IO_Uring,
+	user_data: u64,
+	sockfd: os.Socket,
+	header: ^IORing_Msgheader,
+	flags: u32,
+) -> (
+	sqe: ^io_uring_sqe,
+	err: IO_Uring_Error,
+) {
+	sqe = get_sqe(ring) or_return
+	sqe.opcode = IORING_OP.SENDMSG
+	sqe.fd = i32(sockfd)
+	sqe.addr = cast(u64)uintptr(header)
+	sqe.len = size_of(IORing_Msgheader)
 	sqe.rw_flags = i32(flags)
 	sqe.user_data = user_data
 	return
@@ -597,38 +639,38 @@ link_timeout :: proc(
 }
 
 poll_add :: proc(
-	ring:      ^IO_Uring,
+	ring: ^IO_Uring,
 	user_data: u64,
-	fd:        os.Handle,
-	events:    linux.Fd_Poll_Events,
-	flags:     IORing_Poll_Flags,
+	fd: os.Handle,
+	events: linux.Fd_Poll_Events,
+	flags: IORing_Poll_Flags,
 ) -> (
 	sqe: ^io_uring_sqe,
 	err: IO_Uring_Error,
 ) {
-	sqe             = get_sqe(ring) or_return
-	sqe.opcode      = IORING_OP.POLL_ADD
-	sqe.fd          = i32(fd)
+	sqe = get_sqe(ring) or_return
+	sqe.opcode = IORING_OP.POLL_ADD
+	sqe.fd = i32(fd)
 	sqe.poll_events = transmute(u16)events
-	sqe.len         = transmute(u32)flags
-	sqe.user_data   = user_data
+	sqe.len = transmute(u32)flags
+	sqe.user_data = user_data
 	return
 }
 
 poll_remove :: proc(
-	ring:      ^IO_Uring,
+	ring: ^IO_Uring,
 	user_data: u64,
-	fd:        os.Handle,
-	events:    linux.Fd_Poll_Events,
+	fd: os.Handle,
+	events: linux.Fd_Poll_Events,
 ) -> (
 	sqe: ^io_uring_sqe,
 	err: IO_Uring_Error,
 ) {
-	sqe             = get_sqe(ring) or_return
-	sqe.opcode      = IORING_OP.POLL_REMOVE
-	sqe.fd          = i32(fd)
+	sqe = get_sqe(ring) or_return
+	sqe.opcode = IORING_OP.POLL_REMOVE
+	sqe.fd = i32(fd)
 	sqe.poll_events = transmute(u16)events
-	sqe.user_data   = user_data
+	sqe.user_data = user_data
 	return
 }
 
@@ -726,13 +768,11 @@ completion_queue_make :: proc(fd: os.Handle, params: ^io_uring_params, sq: ^Subm
 	mmap := sq.mmap
 	cqes := cast([^]io_uring_cqe)&mmap[params.cq_off.cqes]
 
-	return(
-		{
-			head = cast(^u32)&mmap[params.cq_off.head],
-			tail = cast(^u32)&mmap[params.cq_off.tail],
-			mask = (cast(^u32)&mmap[params.cq_off.ring_mask])^,
-			overflow = cast(^u32)&mmap[params.cq_off.overflow],
-			cqes = cqes[:params.cq_entries],
-		} \
-	)
+	return ({
+				head = cast(^u32)&mmap[params.cq_off.head],
+				tail = cast(^u32)&mmap[params.cq_off.tail],
+				mask = (cast(^u32)&mmap[params.cq_off.ring_mask])^,
+				overflow = cast(^u32)&mmap[params.cq_off.overflow],
+				cqes = cqes[:params.cq_entries],
+			})
 }
