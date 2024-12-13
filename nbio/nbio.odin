@@ -298,7 +298,7 @@ recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, cal
 	_recv(io, socket, buf, user, callback, all = true)
 }
 
-On_RecvMsg :: #type proc(user: rawptr, received: int, err: net.Network_Error)
+On_RecvMsg :: #type proc(user: rawptr, name_len: int, received: int, err: net.Network_Error)
 
 /*
 The callback for non blocking `send` and `send_all` requests
