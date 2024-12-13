@@ -7,7 +7,7 @@ import "core:container/queue"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "core:posix"
+import "core:sys/posix"
 import "core:time"
 
 import kqueue "_kqueue"
@@ -158,33 +158,25 @@ flush :: proc(io: ^IO) -> os.Errno {
 	for _ in 0 ..< n {
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
-
+		
+			//odinfmt:disable
 		switch &op in completed.operation {
-		case Op_Accept:
-			do_accept(io, completed, &op)
-		case Op_Close:
-			do_close(io, completed, &op)
-		case Op_Connect:
-			do_connect(io, completed, &op)
-		case Op_Read:
-			do_read(io, completed, &op)
-		case Op_Recv:
-			do_recv(io, completed, &op)
-		case Op_Send:
-			do_send(io, completed, &op)
-		case Op_Write:
-			do_write(io, completed, &op)
-		case Op_Timeout:
-			do_timeout(io, completed, &op)
-		case Op_Next_Tick:
-			do_next_tick(io, completed, &op)
-		case Op_Poll:
-			do_poll(io, completed, &op)
-		case Op_Poll_Remove:
-			do_poll_remove(io, completed, &op)
-		case:
-			unreachable()
+		case Op_Accept:      do_accept      (io, completed, &op)
+		case Op_Close:       do_close       (io, completed, &op)
+		case Op_Connect:     do_connect     (io, completed, &op)
+		case Op_Read:        do_read        (io, completed, &op)
+		case Op_Recv:        do_recv        (io, completed, &op)
+		case Op_Send:        do_send        (io, completed, &op)
+		case Op_RecvMsg:     do_recvmsg     (io, completed, &op)
+		case Op_SendMsg:     do_sendmsg     (io, completed, &op)
+		case Op_Write:       do_write       (io, completed, &op)
+		case Op_Timeout:     do_timeout     (io, completed, &op)
+		case Op_Next_Tick:   do_next_tick   (io, completed, &op)
+		case Op_Poll:        do_poll        (io, completed, &op)
+		case Op_Poll_Remove: do_poll_remove (io, completed, &op)
+		case: unreachable()
 		}
+		//odinfmt:enable
 	}
 
 	return os.ERROR_NONE
@@ -213,6 +205,12 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
 			event.filter = kqueue.EVFILT_READ
 		case Op_Send:
+			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
+			event.filter = kqueue.EVFILT_WRITE
+		case Op_RecvMsg:
+			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
+			event.filter = kqueue.EVFILT_READ
+		case Op_SendMsg:
 			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
 			event.filter = kqueue.EVFILT_WRITE
 		case Op_Poll:
@@ -426,6 +424,24 @@ do_recv :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	pool_put(&io.completion_pool, completion)
 }
 
+do_recvmsg :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
+	received: u32
+	errno: os.Errno
+	err: net.Network_Error
+
+	switch sock in op.socket {
+	case net.TCP_Socket:
+		received, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
+		err = net.TCP_Recv_Error(errno.(os.Platform_Error))
+	case net.UDP_Socket:
+		received, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
+		err = net.UDP_Recv_Error(errno.(os.Platform_Error))
+	}
+
+	op.callback(completion.user_data, op.header.msg_namelen, received, errno)
+	pool_put(&io.completion_pool, completion)
+}
+
 do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	sent: u32
 	errno: os.Errno
@@ -466,6 +482,24 @@ do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	}
 
 	op.callback(completion.user_data, op.sent, nil)
+	pool_put(&io.completion_pool, completion)
+}
+
+do_sendmsg :: proc(io: ^IO, completion: ^Completion, op: ^Op_SendMsg) {
+	sent: u32
+	errno: os.Errno
+	err: net.Network_Error
+
+	switch sock in op.socket {
+	case net.TCP_Socket:
+		sent, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
+		err = net.TCP_Send_Error(errno.(os.Platform_Error))
+	case net.UDP_Socket:
+		sent, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
+		err = net.UDP_Send_Error(errno.(os.Platform_Error))
+	}
+
+	op.callback(completion.user_data, sent, errno)
 	pool_put(&io.completion_pool, completion)
 }
 

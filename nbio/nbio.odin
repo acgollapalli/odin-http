@@ -300,6 +300,11 @@ recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, cal
 
 On_RecvMsg :: #type proc(user: rawptr, name_len: int, received: int, err: net.Network_Error)
 
+recvmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte, user: rawptr, callback: On_RecvMsg) {
+	_recvmsg(io, socket, name, iovecs, user, callback)
+}
+
+
 /*
 The callback for non blocking `send` and `send_all` requests
 
@@ -331,6 +336,9 @@ send_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, cal
 // TODO: document
 On_SentMsg :: #type proc(user: rawptr, sent: int, err: net.Network_Error)
 
+sendmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte, user: rawptr, callback: On_SentMsg) {
+	_sendmsg(io, socket, name, iovecs, user, callback)
+}
 
 /*
 Sends at most `len(buf)` bytes from the given buffer over the socket connection to the given endpoint, and calls the given callback

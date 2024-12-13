@@ -442,12 +442,6 @@ recvmsg_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
 
 	op.received += int(completion.result)
 
-	// these were allocated in _recvmsg
-	// if we make the user pass in the msg header directly,
-	// then we don't have to do this
-	// TODO: ask laytan what he thinks
-	delete((transmute(^[]linux.IO_Vec)op.header.msg_iov)^)
-
 	op.callback(completion.user_data, op.received, nil)
 	pool_put(&io.completion_pool, completion)
 }
@@ -525,12 +519,6 @@ sendmsg_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_SendMsg) {
 	}
 
 	op.sent += int(completion.result)
-
-	// these were allocated in _sendmsg
-	// if we make the user pass in the msg header directly,
-	// then we don't have to do this
-	// TODO: ask laytan what he thinks
-	delete((transmute(^[]linux.IO_Vec)op.header.msg_iov)^)
 
 	op.callback(completion.user_data, op.sent, nil)
 	pool_put(&io.completion_pool, completion)

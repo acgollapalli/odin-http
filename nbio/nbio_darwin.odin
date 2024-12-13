@@ -4,6 +4,7 @@ import "core:container/queue"
 import "core:net"
 import "core:os"
 import "core:time"
+import "core:sys/posix"
 
 import kqueue "_kqueue"
 
@@ -160,6 +161,29 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	return completion
 }
 
+_recvmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte, user: rawptr, callback: On_RecvMsg, flags := 0) -> ^Completion{
+	completion := pool_get(&io.completion_pool)
+	completion.ctx = context
+	completion.user_data = user
+
+	header = posix.msghdr {
+		msg_name: rawptr(raw_data(name)),
+		mst_namelen: u32(len(name)),
+		msg_iov: raw_data(transmute([]posix.iovec)iovecs),
+		msg_iovlen: c.int(len(iovecs))
+		msg_flags: u32(flags)
+	}
+
+	completion.operation = Op.Recvmsg {
+		callback = callback,
+		socket = socket,
+		header = header,
+	}
+
+	queue.push_back(&io.completed, completion)
+	return completion
+}
+
 _send :: proc(
 	io: ^IO,
 	socket: net.Any_Socket,
@@ -183,6 +207,29 @@ _send :: proc(
 		endpoint = endpoint,
 		all      = all,
 		len      = len(buf),
+	}
+
+	queue.push_back(&io.completed, completion)
+	return completion
+}
+
+_sendmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte, user: rawptr, callback: On_SentMsg, flags := 0) -> ^Completion{
+	completion := pool_get(&io.completion_pool)
+	completion.ctx = context
+	completion.user_data = user
+
+	header = posix.msghdr {
+		msg_name: rawptr(raw_data(name)),
+		mst_namelen: u32(len(name)),
+		msg_iov: raw_data(transmute([]posix.iovec)iovecs),
+		msg_iovlen: c.int(len(iovecs))
+		msg_flags: u32(flags)
+	}
+
+	completion.operation = Op.Sendmsg {
+		callback = callback,
+		socket = socket,
+		header = header,
 	}
 
 	queue.push_back(&io.completed, completion)

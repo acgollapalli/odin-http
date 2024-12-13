@@ -234,23 +234,13 @@ _recvmsg :: proc(
 	completion.ctx = context
 	completion.user_data = user
 
-	// TODO figure out how to avoid this allocation
-	// should it be passed to the user?
-	iovec_sts := make([]linux.IO_Vec, len(iovecs))
-	for &buf, i in iovecs {
-		iovec_sts[i] = linux.IO_Vec {
-			base = rawptr(raw_data(buf)),
-			len  = uint(len(buf)),
-		}
-	}
-
 	completion.operation = Op_RecvMsg {
 		callback = callback,
 		socket = socket,
 		header = io_uring.IORing_Msgheader {
 			msg_name = u64(uintptr(name)),
 			msg_namelen = u32(len(name)),
-			msg_iov = u64(uintptr(&iovec_sts)),
+			msg_iov = rawptr(raw_data(transmute([]linux.IO_Vec)iovecs)),
 			msg_iovlen = u32(len(iovec_sts)),
 			msg_flags = u32(flags),
 		},
@@ -315,7 +305,7 @@ _sendmsg :: proc(
 		header = io_uring.IORing_Msgheader {
 			msg_name = u64(uintptr(name)),
 			msg_namelen = u32(len(name)),
-			msg_iov = u64(uintptr(&iovec_sts)),
+			msg_iov = u64(uintptr(raw_data(transmute([]linux.IO_Vec)iovecs))),
 			msg_iovlen = u32(len(iovec_sts)),
 			msg_flags = u32(flags),
 		},
