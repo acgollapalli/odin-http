@@ -166,18 +166,18 @@ _recvmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte
 	completion.ctx = context
 	completion.user_data = user
 
-	header = posix.msghdr {
-		msg_name: rawptr(raw_data(name)),
-		mst_namelen: u32(len(name)),
-		msg_iov: raw_data(transmute([]posix.iovec)iovecs),
-		msg_iovlen: c.int(len(iovecs))
-		msg_flags: u32(flags)
+	msgheader := posix.msghdr{
+		msg_name = rawptr(raw_data(name)),
+		msg_namelen = auto_cast len(name),
+		msg_iov = raw_data(transmute([]posix.iovec)iovecs),
+		msg_iovlen = i32(len(iovecs)),
+		msg_flags = transmute(bit_set[posix.Msg_Flag_Bits; i32])i32(flags),
 	}
 
-	completion.operation = Op.Recvmsg {
+	completion.operation = Op_RecvMsg {
 		callback = callback,
 		socket = socket,
-		header = header,
+		header = msgheader,
 	}
 
 	queue.push_back(&io.completed, completion)
@@ -218,15 +218,15 @@ _sendmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte
 	completion.ctx = context
 	completion.user_data = user
 
-	header = posix.msghdr {
-		msg_name: rawptr(raw_data(name)),
-		mst_namelen: u32(len(name)),
-		msg_iov: raw_data(transmute([]posix.iovec)iovecs),
-		msg_iovlen: c.int(len(iovecs))
-		msg_flags: u32(flags)
+	header := posix.msghdr {
+		msg_name = rawptr(raw_data(name)),
+		msg_namelen = posix.socklen_t(len(name)),
+		msg_iov = raw_data(transmute([]posix.iovec)iovecs),
+		msg_iovlen = i32(len(iovecs)),
+		msg_flags = transmute(bit_set[posix.Msg_Flag_Bits; i32])i32(flags),
 	}
 
-	completion.operation = Op.Sendmsg {
+	completion.operation = Op_SendMsg {
 		callback = callback,
 		socket = socket,
 		header = header,

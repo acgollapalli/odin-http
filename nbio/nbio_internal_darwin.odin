@@ -9,6 +9,7 @@ import "core:net"
 import "core:os"
 import "core:sys/posix"
 import "core:time"
+import "core:fmt"
 
 import kqueue "_kqueue"
 
@@ -431,14 +432,30 @@ do_recvmsg :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
 
 	switch sock in op.socket {
 	case net.TCP_Socket:
-		received, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
-		err = net.TCP_Recv_Error(errno.(os.Platform_Error))
+		received, errno = os.recvmsg(os.Socket(sock), &op.header, 0)
+		if p_err, p_cast := errno.(os.Platform_Error); p_cast {
+			err = net.TCP_Recv_Error(errno.(os.Platform_Error))
+		}
+
+		// NOTE: Timeout is the name for EWOULDBLOCK in net package.
+		if err == net.TCP_Recv_Error.Timeout {
+			append(&io.io_pending, completion)
+			return
+		}
 	case net.UDP_Socket:
-		received, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
-		err = net.UDP_Recv_Error(errno.(os.Platform_Error))
+		received, errno = os.recvmsg(os.Socket(sock), &op.header, 0)
+		if p_err, p_cast := errno.(os.Platform_Error); p_cast {
+			err = net.UDP_Recv_Error(p_err)
+		}
+
+		// NOTE: Timeout is the name for EWOULDBLOCK in net package.
+		if err == net.UDP_Recv_Error.Timeout {
+			append(&io.io_pending, completion)
+			return
+		}
 	}
 
-	op.callback(completion.user_data, op.header.msg_namelen, received, errno)
+	op.callback(completion.user_data, int(op.header.msg_namelen), int(received), err)
 	pool_put(&io.completion_pool, completion)
 }
 
@@ -492,14 +509,14 @@ do_sendmsg :: proc(io: ^IO, completion: ^Completion, op: ^Op_SendMsg) {
 
 	switch sock in op.socket {
 	case net.TCP_Socket:
-		sent, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
+		sent, errno = os.sendmsg(os.Socket(sock), &op.header, 0)
 		err = net.TCP_Send_Error(errno.(os.Platform_Error))
 	case net.UDP_Socket:
-		sent, errno = os.sendmsg(os.Socket(sock), op.header, op.flags)
+		sent, errno = os.sendmsg(os.Socket(sock), &op.header, 0)
 		err = net.UDP_Send_Error(errno.(os.Platform_Error))
 	}
 
-	op.callback(completion.user_data, sent, errno)
+	op.callback(completion.user_data, int(sent), err)
 	pool_put(&io.completion_pool, completion)
 }
 
@@ -559,77 +576,6 @@ do_poll_remove :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll_Remove) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_next_tick :: proc(io: ^IO, completion: ^Completion, op: ^Op_Next_Tick) {
-	op.callback(completion.user_data)
-	pool_put(&io.completion_pool, completion)
-}
-
-kq_err_to_os_err :: proc(err: kqueue.Queue_Error) -> os.Errno {
-	switch err {
-	case .Out_Of_Memory:
-		return os.ENOMEM
-	case .Descriptor_Table_Full:
-		return os.EMFILE
-	case .File_Table_Full:
-		return os.ENFILE
-	case .Unknown:
-		return os.EFAULT
-	case .None:
-		fallthrough
-	case:
-		return os.ERROR_NONE
-	}
-}
-
-ev_err_to_os_err :: proc(err: kqueue.Event_Error) -> os.Errno {
-	switch err {
-	case .Access_Denied:
-		return os.EACCES
-	case .Invalid_Event:
-		return os.EFAULT
-	case .Invalid_Descriptor:
-		return os.EBADF
-	case .Signal:
-		return os.EINTR
-	case .Invalid_Timeout_Or_Filter:
-		return os.EINVAL
-	case .Event_Not_Found:
-		return os.ENOENT
-	case .Out_Of_Memory:
-		return os.ENOMEM
-	case .Process_Not_Found:
-		return os.ESRCH
-	case .Unknown:
-		return os.EFAULT
-	case .None:
-		fallthrough
-	case:
-		return os.ERROR_NONE
-	}
-}
-
-// Private proc in net package, verbatim copy.
-_endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: os.SOCKADDR_STORAGE_LH) {
-	switch a in ep.address {
-	case net.IP4_Address:
-		(^os.sockaddr_in)(&sockaddr)^ = os.sockaddr_in {
-			sin_port   = u16be(ep.port),
-			sin_addr   = transmute(os.in_addr)a,
-			sin_family = u8(os.AF_INET),
-			sin_len    = size_of(os.sockaddr_in),
-		}
-		return
-	case net.IP6_Address:
-		(^os.sockaddr_in6)(&sockaddr)^ = os.sockaddr_in6 {
-			sin6_port   = u16be(ep.port),
-			sin6_addr   = transmute(os.in6_addr)a,
-			sin6_family = u8(os.AF_INET6),
-			sin6_len    = size_of(os.sockaddr_in6),
-		}
-		return
-	}
-	unreachable()
-}
 do_next_tick :: proc(io: ^IO, completion: ^Completion, op: ^Op_Next_Tick) {
 	op.callback(completion.user_data)
 	pool_put(&io.completion_pool, completion)
