@@ -297,19 +297,6 @@ IORING_MSG :: enum {
 }
 
 /*
- *  msgheader struct for recvmsg and sendmsg 
- */
-IORing_Msgheader :: struct {
-	msg_name:       u64, /* Optional address */
-	msg_namelen:    u32, /* Size of address */
-	msg_iov:        u64, /* Scatter/gather array */
-	msg_iovlen:     u32, /* # elements in msg_iov */
-	msg_control:    u64, /* Ancillary data, see below */
-	msg_controllen: u32, /* Ancillary data buffer len */
-	msg_flags:      u32, /* Flags on received message */
-}
-
-/*
   * IORING_OP_MSG_RING flags (sq.msg_ring_flags)
   *
   * IORING_MSG_RING_CQE_SKIP	Don't post a CQE to the target ring. Not

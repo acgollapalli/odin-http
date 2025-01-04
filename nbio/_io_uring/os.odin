@@ -453,7 +453,7 @@ recvmsg :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
 	sockfd: os.Socket,
-	header: ^IORing_Msgheader,
+	header: ^linux.Msg_Hdr,
 	flags: u32,
 ) -> (
 	sqe: ^io_uring_sqe,
@@ -463,7 +463,7 @@ recvmsg :: proc(
 	sqe.opcode = IORING_OP.RECVMSG
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(header)
-	sqe.len = size_of(IORing_Msgheader)
+	sqe.len = size_of(linux.Msg_Hdr)
 	sqe.rw_flags = i32(flags)
 	sqe.user_data = user_data
 	return
@@ -495,7 +495,7 @@ sendmsg :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
 	sockfd: os.Socket,
-	header: ^IORing_Msgheader,
+	header: ^linux.Msg_Hdr,
 	flags: u32,
 ) -> (
 	sqe: ^io_uring_sqe,
@@ -505,7 +505,7 @@ sendmsg :: proc(
 	sqe.opcode = IORING_OP.SENDMSG
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(header)
-	sqe.len = size_of(IORing_Msgheader)
+	sqe.len = size_of(linux.Msg_Hdr)
 	sqe.rw_flags = i32(flags)
 	sqe.user_data = user_data
 	return

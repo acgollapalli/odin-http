@@ -223,7 +223,7 @@ _recv :: proc(
 _recvmsg :: proc(
 	io: ^IO,
 	socket: net.Any_Socket,
-	name: ^[]byte,
+	name: []byte,
 	iovecs: [][]byte,
 	user: rawptr,
 	callback: On_RecvMsg,
@@ -237,12 +237,15 @@ _recvmsg :: proc(
 	completion.operation = Op_RecvMsg {
 		callback = callback,
 		socket = socket,
-		header = io_uring.IORing_Msgheader {
-			msg_name = u64(uintptr(name)),
-			msg_namelen = u32(len(name)),
-			msg_iov = rawptr(raw_data(transmute([]linux.IO_Vec)iovecs)),
-			msg_iovlen = u32(len(iovec_sts)),
-			msg_flags = u32(flags),
+		/* 
+		TODO: The posix and linux msghdr structs are not only different
+		they should be simpler and also more accurately reflect the
+        */
+		header = linux.Msg_Hdr {
+			name = rawptr(raw_data(name)),
+			namelen = i32(len(name)),
+			iov = transmute([]linux.IO_Vec)iovecs,
+			flags = transmute(bit_set[linux.Socket_Msg_Bits;i32])i32(flags),
 		},
 	}
 
@@ -278,8 +281,8 @@ _send :: proc(
 _sendmsg :: proc(
 	io: ^IO,
 	socket: net.Any_Socket,
-	name: ^[]byte,
-	iovecs: ^[][]byte,
+	name: []byte,
+	iovecs: [][]byte,
 	user: rawptr,
 	callback: On_SentMsg,
 	flags := 0,
@@ -289,25 +292,14 @@ _sendmsg :: proc(
 	completion.ctx = context
 	completion.user_data = user
 
-	// TODO figure out how to avoid this allocation
-	// should it be passed to the user?
-	iovec_sts := make([]linux.IO_Vec, len(iovecs))
-	for &buf, i in iovecs {
-		iovec_sts[i] = linux.IO_Vec {
-			base = rawptr(raw_data(buf)),
-			len  = uint(len(buf)),
-		}
-	}
-
 	completion.operation = Op_SendMsg {
 		callback = callback,
 		socket = socket,
-		header = io_uring.IORing_Msgheader {
-			msg_name = u64(uintptr(name)),
-			msg_namelen = u32(len(name)),
-			msg_iov = u64(uintptr(raw_data(transmute([]linux.IO_Vec)iovecs))),
-			msg_iovlen = u32(len(iovec_sts)),
-			msg_flags = u32(flags),
+		header = linux.Msg_Hdr {
+			name = rawptr(raw_data(name)),
+			namelen = i32(len(name)),
+			iov = transmute([]linux.IO_Vec)iovecs,
+			flags = transmute(bit_set[linux.Socket_Msg_Bits;i32])i32(flags),
 		},
 	}
 

@@ -92,14 +92,14 @@ Op_Recv :: struct {
 Op_SendMsg :: struct {
 	callback: On_SentMsg,
 	socket:   net.Any_Socket,
-	header:   io_uring.IORing_Msgheader,
+	header:   linux.Msg_Hdr,
 	sent:     int,
 }
 
 Op_RecvMsg :: struct {
 	callback: On_RecvMsg,
 	socket:   net.Any_Socket,
-	header:   io_uring.IORing_Msgheader,
+	header:   linux.Msg_Hdr,
 	received: int,
 }
 
@@ -434,7 +434,7 @@ recvmsg_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
 		case .EINTR, .EWOULDBLOCK:
 			recvmsg_enqueue(io, completion, op)
 		case:
-			op.callback(completion.user_data, op.received, net.TCP_Recv_Error(errno))
+			op.callback(completion.user_data, int(op.header.namelen), op.received, net.UDP_Recv_Error(errno))
 			pool_put(&io.completion_pool, completion)
 		}
 		return
@@ -442,7 +442,7 @@ recvmsg_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_RecvMsg) {
 
 	op.received += int(completion.result)
 
-	op.callback(completion.user_data, op.received, nil)
+	op.callback(completion.user_data, int(op.header.namelen), op.received, nil)
 	pool_put(&io.completion_pool, completion)
 }
 
