@@ -8,6 +8,8 @@ import "core:time"
 
 import win "core:sys/windows"
 
+
+
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	io.allocator = allocator
 
@@ -334,6 +336,81 @@ _send :: proc(
 			len      = len(buf),
 		},
 	)
+}
+
+_recvmsg :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	name: []byte,
+	iovecs: [][]byte,
+	user: rawptr,
+	callback: On_RecvMsg,
+	flags := 0
+) -> ^Completion {
+	sock := win.SOCKET(net.any_socket_to_socket(socket))
+
+	// NOTE(caleb): it sucks, but we have to make an allocation here
+	// because we can't just transmute slices to wsabuf structures on windows
+	lp_buffers := make([]win.WSABUF, len(iovecs), io.allocator)
+	for v, i in iovecs {
+		lp_buffers[i] = win.WSABUF{len = win.ULONG(len(v)), buf = raw_data(v)}
+	}
+
+	header := win.WSAMSG{
+		name = transmute(win.LPSOCKADDR)raw_data(name),
+		namelen = auto_cast len(name),
+		lpBuffers = raw_data(lp_buffers),
+		dwBufferCount = auto_cast len(lp_buffers),
+		dwFlags = auto_cast flags,
+	}
+
+	return submit(
+		io,
+		user,
+		Op_RecvMsg {
+			callback = callback,
+			socket = sock,
+			header = header,
+		}
+	)
+}
+
+_sendmsg :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	name: []byte,
+	iovecs: [][]byte,
+	user: rawptr,
+	callback: On_SentMsg,
+	flags := 0
+) -> ^Completion{
+	sock := win.SOCKET(net.any_socket_to_socket(socket))
+
+	// NOTE(caleb): it sucks, but we have to make an allocation here
+	// because we can't just transmute slices to wsabuf structures on windows
+	lp_buffers := make([]win.WSABUF, len(iovecs), io.allocator)
+	for v, i in iovecs {
+		lp_buffers[i] = win.WSABUF{len = win.ULONG(len(v)), buf = raw_data(v)}
+	}
+
+	header := win.WSAMSG{
+		name = transmute(win.LPSOCKADDR)raw_data(name),
+		namelen = auto_cast len(name),
+		lpBuffers = raw_data(lp_buffers),
+		dwBufferCount = auto_cast len(lp_buffers),
+		dwFlags = auto_cast flags,
+	}
+
+	return submit(
+		io,
+		user,
+		Op_SendMsg {
+			callback = callback,
+			socket = sock,
+			header = header,
+		}
+	)
+
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) -> ^Completion {

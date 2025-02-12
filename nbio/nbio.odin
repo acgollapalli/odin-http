@@ -305,6 +305,7 @@ recvmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte,
 }
 
 
+// TODO(caleb): change this to be On_SendMsg
 /*
 The callback for non blocking `send` and `send_all` requests
 
@@ -334,6 +335,7 @@ send_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, cal
 }
 
 // TODO: document
+// TODO(caleb): change this to be On_SendMsg
 On_SentMsg :: #type proc(user: rawptr, sent: int, err: net.Network_Error)
 
 sendmsg :: proc(io: ^IO, socket: net.Any_Socket, name: []byte, iovecs: [][]byte, user: rawptr, callback: On_SentMsg) {
